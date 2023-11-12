@@ -1,0 +1,11 @@
+layers: 2                           # number of layers
+lambda: [0.3,0.3]                   # sparsity on innovations
+lambda_causes: [0.5,0.5]            # sparsity on causes
+gamma_states: [1.0,1.0]                     # sparsity on states
+pool: [2,2]                       # pooling size from states to causes
+block_size: 20                # block size for the convolutional layers
+patch_size: 12                # patch size for the convolutional layers
+stride: 16                       # stride for the convolutional layers
+p: [144,40]                      # dimensions of the observations
+k: [150,60]                     # dimensions of the states
+d: [40,3]                       # dimensions of the causes
