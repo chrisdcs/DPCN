@@ -47,7 +47,6 @@ class layer(torch.nn.Module):
         )
         self.B = nn.ConvTranspose2d(cause_dim, state_dim, ksize['B'], kstride['B'], padding['B'], bias=False)
         self.C = nn.ConvTranspose2d(state_dim, input_dim, ksize['C'], kstride['C'], padding['C'], bias=False)
-
         
         
         torch.nn.init.uniform_(self.A[0].weight,-0.01,0.01)        # initialize A
@@ -102,16 +101,15 @@ class layer(torch.nn.Module):
                           requires_grad=True, device=device)
         
         xt = self.A(xt_1) + xt_1
-        xt_hat = xt.detach().clone().requires_grad_(True)
+        xt_hat = xt.detach().clone()
         xt = xt.detach().clone().requires_grad_(True)
         opt_x = torch.optim.Adam([xt], lr=self.lr)
-        #opt_u = torch.optim.Adam([ut], lr=self.lr)
-        for _ in range(10):
+        
+        for _ in range(20):
             Cxt = self.C(xt)
             gamma = self.gamma * (1 + torch.exp(-self.B(ut.detach().clone()))) / 2
-            # self.lam * F.huber_loss(xt, xt_hat, 'sum', delta=0.001) + \
             E1 = F.mse_loss(img, Cxt) + \
-                 self.lam * F.huber_loss(xt, xt_hat, 'sum', delta=1e-4) + \
+                 self.lam * Correntropy(xt-xt_hat, self.sigma_t) + \
                  Correntropy(gamma * xt, self.sigma_x)
             self.test.append(E1.item())
             opt_x.zero_grad()
@@ -119,9 +117,8 @@ class layer(torch.nn.Module):
             opt_x.step()
         
         # optimize cause
-        
         opt_u = torch.optim.Adam([ut], lr=self.lr)
-        for _ in range(10):
+        for _ in range(20):
             gamma = self.gamma * torch.exp(-self.B(ut)) / 2
             E2 = Correntropy(gamma * xt, self.sigma_x) + self.beta * Correntropy(ut, self.sigma_u)
             opt_u.zero_grad()
@@ -182,21 +179,21 @@ class video_loader(Dataset):
     def __getitem__(self, index):
         video = self.video[index]
         batch_sequence = torch.zeros((self.frame_size, self.frame_size, self.T))
-        for i in range(self.T):
-            batch_sequence[:, :, i] = torch.FloatTensor(video[i])
+        for i in range(self.T, 600):
+            batch_sequence[:, :, i-300] = torch.FloatTensor(video[i])
         return batch_sequence.unsqueeze_(0)
     
     def __len__(self):
         return self.N
     
 # video data loader 
-loader = DataLoader(video_loader('Video_train.mat'), batch_size=5, shuffle=True, num_workers=8)
+loader = DataLoader(video_loader('Video_train.mat'), batch_size=1, shuffle=False, num_workers=8)
 
-max_epochs = 30
+max_epochs = 120
 
 input_dim = [1, 4]
-state_dim = [10, 4]
-cause_dim = [10, 2]
+state_dim = [20, 4]
+cause_dim = [20, 2]
 state_size = [16, 4]
 cause_size = [8, 4]
 ksize = [{'A': 3, 'B': 2, 'C': 2}, {'A': 3, 'B': 3, 'C': 2}]
@@ -205,124 +202,18 @@ padding = [{'A': 1, 'B': 0, 'C': 0}, {'A': 1, 'B': 1, 'C': 0}]
 
 layer1 = layer(input_dim[0], state_dim[0], cause_dim[0], state_size[0], cause_size[0], ksize[0], kstride[0], padding[0])
 
-# checkpoint = torch.load(ROOT / "runs" / "checkpoint.pth.tar")
-# layer1.load_state_dict(checkpoint['layer1_state_dict'])
+checkpoint = torch.load(ROOT / "runs" / "checkpoint.pth.tar")
+layer1.load_state_dict(checkpoint['layer1_state_dict'])
 # layer1.reduce_kernel_size()
 layer1 = layer1.to(device)
 
-save_dir = ROOT / "runs"
+save_dir = ROOT / "runs" / "test"
 if not save_dir.exists():
     save_dir.mkdir()
-    
-
-opt_A = torch.optim.Adam(layer1.A.parameters(), lr=1e-3, weight_decay=1e-4)
-opt_B = torch.optim.Adam([layer1.B.weight], lr=1e-3)
-opt_C = torch.optim.Adam(layer1.C.parameters(), lr=1e-3)
-
-sched_A = torch.optim.lr_scheduler.ExponentialLR(opt_A, gamma=0.9)
-sched_B = torch.optim.lr_scheduler.ExponentialLR(opt_B, gamma=0.9)
-sched_C = torch.optim.lr_scheduler.ExponentialLR(opt_C, gamma=0.9)
-for epoch in range(max_epochs):
-    loss_list = []
-    print('Epoch: ', epoch+1)
-    for _, data in enumerate(loader):
-        data = data.to(device)
-        print('\t', "inference: ")
-        X, U = layer1.batch_inference(data)
-        np.save(save_dir / "U.npy", U.detach().cpu().numpy()[0])
-        np.save(save_dir / "X.npy", X.detach().cpu().numpy()[0])
-        xt_1 = torch.zeros((data.shape[0], state_dim[0], state_size[0], state_size[0]), device = device, requires_grad=True)
-        for t in range(X.shape[-1]):
-            xt = X[:, :, :, :, t].detach().clone().requires_grad_(True)
-            ut = U[:, :, :, :, t].detach().clone().requires_grad_(True)
-            frame = data[:, :, :, :, t].detach().clone().requires_grad_(True)
-            predicted_frame, predicted_state, weighted_state = layer1(xt_1, xt, ut)
-            video_recon_loss = F.mse_loss(predicted_frame, frame)
-            state_recon_loss = F.huber_loss(xt, predicted_state, 'sum', delta=1e-4)
-            #layer1.lam * F.huber_loss(predicted_state, xt, delta=0.01)#Correntropy(predicted_state-xt, layer1.sigma_t)
-            sparsity_loss = Correntropy(weighted_state, layer1.sigma_x)
-            
-            opt_A.zero_grad()
-            state_recon_loss.backward()
-            opt_A.step()
-            
-            opt_B.zero_grad()
-            sparsity_loss.backward()
-            opt_B.step()
-            
-            video_recon_loss.backward()
-            opt_C.step()
-            opt_C.zero_grad()
-
-            total_loss = video_recon_loss + state_recon_loss + sparsity_loss
-            loss_list.append(total_loss.item())
-            
-            xt_1 = xt.detach().clone().requires_grad_(True)
-        print('\ttotal loss:' , total_loss.item(), '\tvideo_recon_loss:', video_recon_loss.item(), '\tstate_recon_loss:', state_recon_loss.item(), '\tsparsity_loss:', sparsity_loss.item())
-    print('Epoch Loss: ', np.mean(loss_list))
-
-    torch.save({'epoch': epoch,
-                'layer1_state_dict': layer1.state_dict(),
-                #'optimizer_A_state_dict': opt_A.state_dict(),
-                #'optimizer_B_state_dict': opt_B.state_dict(),
-                #'optimizer_C_state_dict': opt_C.state_dict(),
-                }, save_dir / 'checkpoint.pth.tar')
-    if (epoch + 1) % 10 == 0:
-        layer1.reduce_kernel_size()
-        
-    #sched_A.step()
-    #sched_B.step()
-    #sched_C.step()
-
-"""
-layer2 = layer(input_dim[1], state_dim[1], cause_dim[1], state_size[1], cause_size[1], ksize[1], kstride[1], padding[1], 2., 1e-3)
-layer2 = layer2.to(device)
-model = DPCN(layer1)
-model.add_layer(layer2)
-
-opt_A = torch.optim.Adam([model.layers[-1].A.weight], lr=1e-3)
-opt_B = torch.optim.Adam([model.layers[-1].B.weight], lr=1e-3)
-opt_C = torch.optim.Adam([model.layers[-1].C.weight], lr=1e-3)
-
-for epoch in range(max_epochs):
-    loss_list = []
-    print('Epoch: ', epoch+1)
-    for _, data in enumerate(loader):
-        data = data.to(device)
-        print('\t', "inference: ")
-        data = model.multi_layer_inference(data)
-        np.save(save_dir / "test_U.npy", data.detach().cpu().numpy()[0])
-        print("inference for layer 2: ")
-        X, U = model.layers[-1].batch_inference(data)
-        np.save(save_dir / "U2.npy", U.detach().cpu().numpy()[0])
-        np.save(save_dir / "X2.npy", X.detach().cpu().numpy()[0])
-        xt_1 = torch.zeros((data.shape[0], state_dim[1], state_size[1], state_size[1]), device = device, requires_grad=True)
-        for t in range(data.shape[-1]):
-            xt = X[:, :, :, :, t].detach().clone().requires_grad_(True)
-            ut = U[:, :, :, :, t].detach().clone().requires_grad_(True)
-            frame = data[:, :, :, :, t].detach().clone().requires_grad_(True)
-            predicted_frame, predicted_state, weighted_state = model(xt_1, xt, ut)
-            video_recon_loss = F.mse_loss(predicted_frame, frame)
-            state_recon_loss = F.mse_loss(predicted_state, xt)
-            sparsity_loss = Correntropy(weighted_state, layer1.sigma_x)
-            
-            opt_A.zero_grad()
-            state_recon_loss.backward()
-            opt_A.step()
-            
-            opt_B.zero_grad()
-            sparsity_loss.backward()
-            opt_B.step()
-            
-            video_recon_loss.backward()
-            opt_C.step()
-            opt_C.zero_grad()
-
-            total_loss = video_recon_loss + state_recon_loss + sparsity_loss
-            
-            loss_list.append(total_loss.item())
-            
-            xt_1 = xt.detach().clone().requires_grad_(True)
-        print('\ttotal loss:' , total_loss.item(), '\tvideo_recon_loss:', video_recon_loss.item(), '\tstate_recon_loss:', state_recon_loss.item(), '\tsparsity_loss:', sparsity_loss.item())
-    print('Epoch Loss: ', np.mean(loss_list))
-    """
+for idx, data in enumerate(loader):
+    data = data.to(device)
+    print('\t', "inference: ")
+    X, U = layer1.batch_inference(data)
+    np.save(save_dir / f"U{idx}.npy", U.detach().cpu().numpy()[0])
+    # np.save(save_dir / f"X{idx}.npy", X.detach().cpu().numpy()[0])
+    xt_1 = torch.zeros((data.shape[0], state_dim[0], state_size[0], state_size[0]), device = device, requires_grad=True)
