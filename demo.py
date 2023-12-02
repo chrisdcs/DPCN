@@ -60,7 +60,7 @@ class layer(torch.nn.Module):
         self.lam = nn.Parameter(torch.FloatTensor([0.3]), requires_grad=False)          # namely the lambda in eq. 5
         self.sigma_x = nn.Parameter(torch.FloatTensor([sigma]), requires_grad=False)  # kernel size for correntropy
         self.sigma_u = nn.Parameter(torch.FloatTensor([sigma]), requires_grad=False)  # kernel size for correntropy
-        self.sigma_t = nn.Parameter(torch.FloatTensor([sigma / 5]), requires_grad=False)  # kernel size for correntropy
+        self.sigma_t = nn.Parameter(torch.FloatTensor([sigma / 10]), requires_grad=False)  # kernel size for correntropy
         self.lr = lr
         
         self.state_dim = state_dim
@@ -111,7 +111,7 @@ class layer(torch.nn.Module):
             gamma = self.gamma * (1 + torch.exp(-self.B(ut.detach().clone()))) / 2
             # self.lam * F.huber_loss(xt, xt_hat, 'sum', delta=0.001) + \
             E1 = F.mse_loss(img, Cxt) + \
-                 self.lam * F.huber_loss(xt, xt_hat, 'sum', delta=1e-4) + \
+                 self.lam * Correntropy(xt-xt_hat, self.sigma_t) + \
                  Correntropy(gamma * xt, self.sigma_x)
             self.test.append(E1.item())
             opt_x.zero_grad()
@@ -215,7 +215,7 @@ if not save_dir.exists():
     save_dir.mkdir()
     
 
-opt_A = torch.optim.Adam(layer1.A.parameters(), lr=1e-3, weight_decay=1e-4)
+opt_A = torch.optim.Adam(layer1.A.parameters(), lr=1e-3, weight_decay=1e-3)
 opt_B = torch.optim.Adam([layer1.B.weight], lr=1e-3)
 opt_C = torch.optim.Adam(layer1.C.parameters(), lr=1e-3)
 
@@ -232,14 +232,15 @@ for epoch in range(max_epochs):
         np.save(save_dir / "U.npy", U.detach().cpu().numpy()[0])
         np.save(save_dir / "X.npy", X.detach().cpu().numpy()[0])
         xt_1 = torch.zeros((data.shape[0], state_dim[0], state_size[0], state_size[0]), device = device, requires_grad=True)
+        old_A = layer1.A[0].weight.detach().clone().requires_grad_(True)
         for t in range(X.shape[-1]):
             xt = X[:, :, :, :, t].detach().clone().requires_grad_(True)
             ut = U[:, :, :, :, t].detach().clone().requires_grad_(True)
             frame = data[:, :, :, :, t].detach().clone().requires_grad_(True)
             predicted_frame, predicted_state, weighted_state = layer1(xt_1, xt, ut)
             video_recon_loss = F.mse_loss(predicted_frame, frame)
-            state_recon_loss = F.huber_loss(xt, predicted_state, 'sum', delta=1e-4)
-            #layer1.lam * F.huber_loss(predicted_state, xt, delta=0.01)#Correntropy(predicted_state-xt, layer1.sigma_t)
+            state_recon_loss = Correntropy(predicted_state-xt, layer1.sigma_t)#F.huber_loss(xt, predicted_state, 'sum', delta=1e-2)#F.l1_loss(xt, predicted_state)#
+            
             sparsity_loss = Correntropy(weighted_state, layer1.sigma_x)
             
             opt_A.zero_grad()
