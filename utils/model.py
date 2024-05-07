@@ -283,7 +283,7 @@ class Layer_FISTA(nn.Module):
         gamma = self.gamma0 * torch.div(1 + torch.exp(-self.B @ u_t), 2)
         
         states = [{
-                    'L': torch.ones((x_t.shape[0]), device=self.device),
+                    'L': torch.ones((x_t.shape[0], 1, 1, 1, 1), device=self.device),
                     'eta': 2,
                     't_k': 1.,
                     't_k_1': 1.,
@@ -314,7 +314,7 @@ class Layer_FISTA(nn.Module):
         
         
         cause = {
-                 'L': torch.ones((u_t.shape[0]), device=self.device),
+                 'L': torch.ones((u_t.shape[0], 1, 1, 1, 1), device=self.device),
                  'u_k': u_t.clone(),
                  'u_k_1': u_t.clone(), 
                  'z_k': u_t.clone(),
@@ -375,17 +375,17 @@ class Layer_FISTA(nn.Module):
         const = 1 / 2 * torch.square(y - self.C @ z_k).flatten(1).sum(1) + \
                 self.lam * torch.abs(z_k - x_hat).flatten(1).sum(1)
         step = 0
-        while torch.sum(stop_line_search) < x_k.shape[0] and step <= 1000:
+        while torch.sum(stop_line_search) < x_k.shape[0] and step <= 100:
             step += 1
             x_k = soft_thresholding(z_k - torch.div(gradient_zk, L), 
                                     torch.div(gamma, L))
             temp1 = 1 / 2 * torch.square(y - self.C @ x_k).flatten(1).sum(1) + \
                     self.lam * torch.abs(x_k - x_hat).flatten(1).sum(1)
             temp2 = const + ((x_k - z_k) * gradient_zk).flatten(1).sum(1) +\
-                    L / 2 * torch.square(x_k - z_k).flatten(1).sum(1)
+                    L.squeeze() / 2 * torch.square(x_k - z_k).flatten(1).sum(1)
                     
             stop_line_search = temp1 <= temp2
-            L = torch.where(stop_line_search, L, eta * L)
+            L = torch.where(stop_line_search[:,None,None,None,None], L, eta * L)
             
         # acceleration step
         t_k_1 = (1 + (1 + 4 * t_k**2)**0.5) / 2
@@ -419,7 +419,7 @@ class Layer_FISTA(nn.Module):
         # line search
         const = (self.gamma0 * (x * torch.exp(-self.B @ z_k)) / 2).flatten(1).sum(1)
         step = 0
-        while torch.sum(stop_line_search) < batch_size and step <= 1000:
+        while torch.sum(stop_line_search) < batch_size and step <= 100:
             step += 1
             # FISTA
             # update u_k
@@ -428,9 +428,9 @@ class Layer_FISTA(nn.Module):
             
             temp1 = (self.gamma0 * (x * torch.exp(-self.B @ u_k)) / 2).flatten(1).sum(1)
             temp2 = const + ((u_k - z_k) * gradient_zk).flatten(1).sum(1) +\
-                    L / 2 * torch.square(u_k - z_k).flatten(1).sum(1)
+                    L.squeeze() / 2 * torch.square(u_k - z_k).flatten(1).sum(1)
             stop_line_search = temp1 <= temp2
-            L = torch.where(stop_line_search, L, eta * L)
+            L = torch.where(stop_line_search[:,None,None,None,None], L, eta * L)
         
         beta = max(0.99 * beta, 1e-3)
         # acceleration step
