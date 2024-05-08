@@ -281,7 +281,7 @@ class Layer_FISTA(nn.Module):
         Cy = self.C.transpose(-1,-2) @ patches
         CTC = self.C.transpose(-1,-2) @ self.C
         gamma = self.gamma0 * torch.div(1 + torch.exp(-self.B @ u_t), 2)
-        
+        '''
         states = [{
                     'L': torch.ones((x_t.shape[0], 1, 1, 1, 1), device=self.device),
                     'eta': 2,
@@ -297,6 +297,7 @@ class Layer_FISTA(nn.Module):
                     'gamma': gamma
                   } for i in range(x_t.shape[2])]
         '''
+        
         state = {
                  'L': torch.ones((x_t.shape[0], 1, 1, 1, 1), device=self.device),
                  'eta': 2,
@@ -304,13 +305,13 @@ class Layer_FISTA(nn.Module):
                  't_k_1': 1.,
                  'x_k': x_t.clone(),
                  'x_k_1': x_t.clone(), 
-                 'x_hat': x_hat,
+                 'x_hat': x_hat.clone(),
                  'z_k': x_t.clone(),
-                 'Cy': self.C.transpose(-1,-2) @ patches, 
+                 'Cy': self.C.transpose(-1,-2) @ patches.clone(), 
                  'CTC': self.C.transpose(-1,-2) @ self.C, 
-                 'y': patches,
-                 'gamma': self.gamma0 * (1 + torch.exp(-self.B @ u_t)) / 2
-                 }'''
+                 'y': patches.clone(),
+                 'gamma': gamma.clone()
+                 }
         
         
         cause = {
@@ -331,18 +332,17 @@ class Layer_FISTA(nn.Module):
         for i in range(self.n_steps):
             #step += 1
             #x_sparsity_prev = x_sparsity.clone()
-            #state = self.update_state_FISTA(state)
-            for j in range(x_t.shape[2]):
-                states[j] = self.update_state_FISTA(states[j])
-            state = torch.concatenate([states[j]['x_k'] for j in range(x_t.shape[2])], dim=2)
-            #cause['x'] = torch.sum(torch.abs(state['x_k'].clone()), dim=2, keepdim=True)
-            cause['x'] = torch.sum(torch.abs(state.clone()), dim=2, keepdim=True)
+            state = self.update_state_FISTA(state)
+            #for j in range(x_t.shape[2]):
+            #    states[j] = self.update_state_FISTA(states[j])
+            # state = torch.concatenate([states[j]['x_k'] for j in range(x_t.shape[2])], dim=2)
+            cause['x'] = torch.sum(torch.abs(state['x_k'].clone()), dim=2, keepdim=True)
+            #cause['x'] = torch.sum(torch.abs(state.clone()), dim=2, keepdim=True)
             cause = self.update_cause_FISTA(cause)
             gamma = self.gamma0 * torch.div(1 + torch.exp(-self.B @ cause['u_k'].clone()), 2)
-            # states[j]['gamma'] = gamma
-            for j in range(x_t.shape[2]):
-                states[j]['gamma'] = gamma
-            # states['gamma'] = self.gamma0 * (1 + torch.exp(-self.B @ cause['u_k'].clone())) / 2
+            #for j in range(x_t.shape[2]):
+            #    states[j]['gamma'] = gamma
+            state['gamma'] = gamma
             
             #x_sparsity = torch.abs(state['x_k'].clone()) > 0
             
@@ -351,7 +351,7 @@ class Layer_FISTA(nn.Module):
             
             #stop = change_ratio < 0.03
         
-        return state, cause['u_k']
+        return state['x_k'], cause['u_k']
     
     def update_state_FISTA(self, state):
         # unpack state
@@ -375,7 +375,8 @@ class Layer_FISTA(nn.Module):
         const = 1 / 2 * torch.square(y - self.C @ z_k).flatten(1).sum(1) + \
                 self.lam * torch.abs(z_k - x_hat).flatten(1).sum(1)
         step = 0
-        while torch.sum(stop_line_search) < x_k.shape[0] and step <= 100:
+        keep_going = True
+        while keep_going:# and step <= 100:
             step += 1
             x_k = soft_thresholding(z_k - torch.div(gradient_zk, L), 
                                     torch.div(gamma, L))
@@ -383,7 +384,7 @@ class Layer_FISTA(nn.Module):
                     self.lam * torch.abs(x_k - x_hat).flatten(1).sum(1)
             temp2 = const + ((x_k - z_k) * gradient_zk).flatten(1).sum(1) +\
                     L.squeeze() / 2 * torch.square(x_k - z_k).flatten(1).sum(1)
-                    
+            if temp1.sum() <= temp2.sum(): keep_going = False
             stop_line_search = temp1 <= temp2
             L = torch.where(stop_line_search[:,None,None,None,None], L, eta * L)
             
@@ -419,18 +420,21 @@ class Layer_FISTA(nn.Module):
         # line search
         const = (self.gamma0 * (x * torch.exp(-self.B @ z_k)) / 2).flatten(1).sum(1)
         step = 0
-        while torch.sum(stop_line_search) < batch_size and step <= 100:
+        keep_going = True
+        while keep_going:# and step <= 100:
             step += 1
             # FISTA
             # update u_k
-            u_k = soft_thresholding(z_k - torch.div(gradient_zk, L), 
-                                    beta / L)
+            u_k = soft_thresholding(z_k - torch.div(gradient_zk, L), beta / L)
             
             temp1 = (self.gamma0 * (x * torch.exp(-self.B @ u_k)) / 2).flatten(1).sum(1)
             temp2 = const + ((u_k - z_k) * gradient_zk).flatten(1).sum(1) +\
                     L.squeeze() / 2 * torch.square(u_k - z_k).flatten(1).sum(1)
             stop_line_search = temp1 <= temp2
+            
             L = torch.where(stop_line_search[:,None,None,None,None], L, eta * L)
+            if temp1.sum() <= temp2.sum(): keep_going = False
+            
         
         beta = max(0.99 * beta, 1e-3)
         # acceleration step
