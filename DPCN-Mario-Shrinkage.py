@@ -36,7 +36,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # video data loader
 loader = DataLoader(mario_loader('data/mario_video_train.npy'), batch_size=2, shuffle=False, num_workers=1)
 
-max_epochs = 15
+max_epochs = 5
 
 layer1 = Shrinkage_Layer(n_ch=3, lam=0.5, gamma0=0.3, mu=0.3, beta=0.5, n_u=50)
 layer1 = layer1.to(device)
