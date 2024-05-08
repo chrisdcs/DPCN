@@ -26,7 +26,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd())) # relative path to current workin
 
 save_dir = ROOT / "runs" / "shrinkage" / "mario"
 if not save_dir.exists():
-    save_dir.mkdir()
+    save_dir.mkdir(parents=True, exist_ok=True)
 
 torch.manual_seed(0)
 
@@ -38,7 +38,7 @@ loader = DataLoader(mario_loader('data/mario_video_train.npy'), batch_size=2, sh
 
 max_epochs = 15
 
-layer1 = Shrinkage_Layer(n_ch=3, lam=0.5, gamma0=0.3, mu=0.3, beta=0.2, n_u=50)
+layer1 = Shrinkage_Layer(n_ch=3, lam=0.5, gamma0=0.3, mu=0.3, beta=0.5, n_u=50)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])

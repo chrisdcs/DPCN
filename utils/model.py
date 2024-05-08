@@ -480,6 +480,6 @@ class Layer_FISTA(nn.Module):
     
     def normalize_weights(self):
         with torch.no_grad():
-            self.A.data = self.A.data / self.A.data.norm(dim=-2, keepdim=True)
+            #self.A.data = self.A.data / self.A.data.norm(dim=-2, keepdim=True)
             self.B.data = self.B.data / self.B.data.norm(dim=-2, keepdim=True)
             self.C.data = self.C.data / self.C.data.norm(dim=-2, keepdim=True)

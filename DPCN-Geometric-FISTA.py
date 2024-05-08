@@ -36,10 +36,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # video data loader
 loader = DataLoader(video_loader('data/Video_train.mat'), batch_size=5, shuffle=False, num_workers=1)
 
-max_epochs = 20
+max_epochs = 10
 
 layer1 = Layer_FISTA(n_ch=1, gamma0=1., mu=0.01/150, lam=0.5, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
-                     isTopLayer=True, input_size=None, n_steps=10)
+                     isTopLayer=True, input_size=None, n_steps=30)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])
