@@ -30,6 +30,8 @@ class video_loader(Dataset):
         # N: number of video sequences
         # T: number of frames for each video sequence
         self.N, self.T = self.video.shape
+        
+        # use only half of the frames to speed up training
         self.T //= 2
         h, _ = self.video[0][0].shape
         self.frame_size = h
@@ -43,7 +45,31 @@ class video_loader(Dataset):
     
     def __len__(self):
         return self.N
+
+
+class image_loader(Dataset):
+    # load image data: shape (N, C, H, W)
+    def __init__(self, file_path):
+        videos = np.load(file_path)
+        # N: number of video sequences
+        # T: number of frames for each video sequence
+        self.N, self.T, h, w, c = videos.shape
+        
+        self.images = []
+        
+        for i in range(self.N):
+            video = videos[i]
+            for j in range(self.T):
+                self.images.append(video[j])
+
+        self.N = len(self.images)
+        
+    def __getitem__(self, index):
+        image = self.images[index]
+        return torch.FloatTensor(image).permute(2,0,1)
     
+    def __len__(self):
+        return self.N
     
 def make_patches(img, patch_size):
     # outupt shape: (batch, n_patches, patch_size^2, 1)

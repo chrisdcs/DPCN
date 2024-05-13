@@ -36,9 +36,9 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # video data loader
 loader = DataLoader(mario_loader('data/mario_video_train.npy'), batch_size=2, shuffle=False, num_workers=1)
 
-max_epochs = 5
+max_epochs = 10
 
-layer1 = Shrinkage_Layer(n_ch=3, lam=0.5, gamma0=0.3, mu=0.3, beta=0.5, n_u=50)
+layer1 = Shrinkage_Layer(n_ch=3, lam=0.5, gamma0=0.3, mu=0.3, beta=0.5, n_u=100)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])
@@ -54,7 +54,7 @@ for epoch in range(max_epochs):
         np.save(save_dir / "U.npy", U.detach().cpu().numpy()[0])
         np.save(save_dir / "X.npy", X.detach().cpu().numpy()[0])
         X, U = X.detach().clone().requires_grad_(True), U.detach().clone().requires_grad_(True)
-        for _ in range(5):
+        for _ in range(3):
             x_t_minus_1 = torch.randn_like(X[:, :, :, :, :, 0])
             video_recon, X_hat, X_U = layer1(X, U, x_t_minus_1)
             np.save(save_dir / "recon.npy", video_recon.detach().cpu().numpy()[0])

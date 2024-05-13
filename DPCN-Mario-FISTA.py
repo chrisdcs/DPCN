@@ -39,7 +39,7 @@ loader = DataLoader(mario_loader('data/mario_video_train.npy'), batch_size=2, sh
 max_epochs = 5
 
 layer1 = Layer_FISTA(n_ch=3, lam=0.5, gamma0=1., mu=0.01/150, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
-                     input_size=40, isTopLayer=True, n_steps=100)
+                     input_size=40, isTopLayer=True, n_steps=50)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])

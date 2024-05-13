@@ -6,4 +6,9 @@
 *.out
 *.tar
 *.pyc
+*.png
+*.pl
+*.pl~
+*.zip
+*.jpg
 ML-CSC/data/
