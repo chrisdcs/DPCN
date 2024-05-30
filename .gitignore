@@ -12,3 +12,6 @@
 *.zip
 *.jpg
 ML-CSC/data/
+data/cifar-10-batches-py/
+mario_plots/
+coil100_plots/
