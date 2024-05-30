@@ -13,3 +13,5 @@
 *.jpg
 *.pth
 ML-CSC/data/
+data/cifar-10-batches-py/
+plots/
