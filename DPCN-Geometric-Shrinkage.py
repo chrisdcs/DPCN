@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Shrinkage_Layer
+from utils.model import MM_Layer
 
 
 FILE = Path(__file__).resolve()
@@ -38,7 +38,7 @@ loader = DataLoader(video_loader('data/Video_train.mat'), batch_size=5, shuffle=
 
 max_epochs = 20
 
-layer1 = Shrinkage_Layer(n_ch=1, lam=0.5, gamma0=0.2, mu=0.3, beta=0.3, n_u=100)
+layer1 = MM_Layer(n_ch=1, lam=0.5, gamma0=0.2, mu=0.3, beta=0.3, n_u=100)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])

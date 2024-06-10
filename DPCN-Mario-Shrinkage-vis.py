@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Shrinkage_Layer, Shrinkage_Layer_Mario, Shrinkage_Layer_Mario_vis
+from utils.model import MM_Layer, Shrinkage_Layer_Mario, Shrinkage_Layer_Mario_vis
 
 
 FILE = Path(__file__).resolve()

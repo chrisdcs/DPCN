@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Shrinkage_Layer, Correntropy, Layer_FISTA_vis
+from utils.model import MM_Layer, Correntropy, Layer_FISTA_vis
 
 
 FILE = Path(__file__).resolve()

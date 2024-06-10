@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Shrinkage_Layer, Correntropy
+from utils.model import MM_Layer, Correntropy
 
 
 FILE = Path(__file__).resolve()
@@ -38,7 +38,7 @@ loader = DataLoader(mario_loader('data/coil100_video_train_50.npy'), batch_size=
 
 max_epochs = 20
 
-layer1 = Shrinkage_Layer(n_ch=3, lam=0., gamma0=.1, mu=0.001, beta=.1, n_u=100, multi_dict=True, state_size=2000,
+layer1 = MM_Layer(n_ch=3, lam=0., gamma0=.1, mu=0.001, beta=.1, n_u=100, multi_dict=True, state_size=2000,
                          cause_size=128, patch_size=16)
 layer1 = layer1.to(device)
 #opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])

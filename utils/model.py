@@ -26,19 +26,42 @@ def patch_to_image(patches, patch_size):
     image = image.view(batch_size, n_channel, grid_size*patch_size, grid_size*patch_size)
     return image
 
-class Shrinkage_Layer(nn.Module):
+class MM_Layer(nn.Module):
     def __init__(self, *args, **kwargs):
-        super(Shrinkage_Layer, self).__init__()
+        super(MM_Layer, self).__init__()
         
         self.n_ch = kwargs['n_ch']
         
-        C = torch.rand(1, self.n_ch, 1, 16**2, 300)#.unsqueeze(0).unsqueeze(0)
+        if "state_size" in kwargs: 
+            self.state_size = kwargs['state_size']
+        else:
+            self.state_size = 300
+            
+        if "cause_size" in kwargs:
+            self.cause_size = kwargs['cause_size']
+        else:
+            self.cause_size = 40
+        
+        if "patch_size" in kwargs:
+            self.patch_size = kwargs['patch_size']
+            self.n_patch = (32 // self.patch_size) ** 2
+        else:
+            self.patch_size = 16
+            self.n_patch = 4
+            
+        if "multi_dict" in kwargs and kwargs['multi_dict']:
+            self.n_dict = self.n_patch
+        else:
+            self.n_dict = 1
+
+        
+        C = torch.rand(1, self.n_ch, self.n_dict, 16**2, self.state_size)#.unsqueeze(0).unsqueeze(0)
         C = C / C.norm(dim=-2, keepdim=True)
         
-        B = torch.rand(1, self.n_ch, 1, 300, 40)#.unsqueeze(0).unsqueeze(0)
+        B = torch.rand(1, self.n_ch, self.n_dict, self.state_size, self.cause_size)#.unsqueeze(0).unsqueeze(0)
         B = B / B.norm(dim=-2, keepdim=True)
         
-        A = torch.rand(1, self.n_ch, 1, 300, 300)#.unsqueeze(0).unsqueeze(0)
+        A = torch.rand(1, self.n_ch, self.n_dict, self.state_size, self.state_size)#.unsqueeze(0).unsqueeze(0)
         A = A / A.norm(dim=-2, keepdim=True)
         
         self.A = nn.Parameter(A)
@@ -50,11 +73,11 @@ class Shrinkage_Layer(nn.Module):
         I = torch.eye(B.shape[-2]).unsqueeze(0).unsqueeze(0)
         self.I_u = nn.Parameter(I, requires_grad=False)
         
-        self.patch_size = 16
-        self.n_patch = 4
-
+        self.n_x = kwargs['n_x']
         self.n_u = kwargs['n_u']
 
+        self.multi_dict = kwargs['multi_dict']
+        self.use_A = kwargs['use_A']
         
         lam, gamma0, mu, beta =kwargs['lam'], kwargs['gamma0'], kwargs['mu'], kwargs['beta']
         # weight for the transition error term
@@ -92,7 +115,7 @@ class Shrinkage_Layer(nn.Module):
                 patches_t = make_patches(y_t, self.patch_size)
                 # patches_t: (batch_size, 4, 256, 1) if gray scale images
                 # patches_t: (batch_size, 3, 4, 256, 1) if RGB images
-                if t == 0:
+                if t == 0 or not self.use_A:
                     x_prev = torch.randn_like(self.C.transpose(-1,-2) @ patches_t)
                 x_t, u_t = self.AM(patches_t, x_prev)
                 X.append(x_t)
@@ -199,9 +222,14 @@ class Shrinkage_Layer(nn.Module):
             
         return torch.stack(vid_recon, dim=-1), torch.stack(X_pred, dim=-1), torch.stack(X_U, dim=-1)
 
-class Layer_FISTA(nn.Module):
+
+class MM_Conv_Layer(nn.Module):
+    def __init__(self):
+        pass
+
+class FISTA_Layer(nn.Module):
     def __init__(self, *args, **kwargs) -> None:
-        super(Layer_FISTA, self).__init__()
+        super(FISTA_Layer, self).__init__()
         # weight for the state-cause correlation term
         self.gamma0 = kwargs['gamma0']#nn.Parameter(torch.tensor(1), requires_grad=False)
         # parameter for the smoothed transition error

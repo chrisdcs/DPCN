@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Layer_FISTA
+from utils.model import FISTA_Layer
 
 
 FILE = Path(__file__).resolve()
@@ -38,7 +38,7 @@ loader = DataLoader(video_loader('data/Video_train.mat'), batch_size=5, shuffle=
 
 max_epochs = 10
 
-layer1 = Layer_FISTA(n_ch=1, gamma0=1., mu=0.01/150, lam=0.5, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
+layer1 = FISTA_Layer(n_ch=1, gamma0=1., mu=0.01/150, lam=0.5, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
                      isTopLayer=True, input_size=None, n_steps=20)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])

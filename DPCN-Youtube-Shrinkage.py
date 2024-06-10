@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from utils.datasets import video_loader, make_patches, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import Shrinkage_Layer
+from utils.model import MM_Layer
 
 
 FILE = Path(__file__).resolve()
@@ -38,7 +38,7 @@ loader = DataLoader(mario_loader('data/youtube_video_train.npy'), batch_size=1, 
 
 max_epochs = 10
 
-layer1 = Shrinkage_Layer(n_ch=1, lam=0., gamma0=0.3, mu=.1, beta=0.3, n_u=50, multi_dict=True, state_size=1000,
+layer1 = MM_Layer(n_ch=1, lam=0., gamma0=0.3, mu=.1, beta=0.3, n_u=50, multi_dict=True, state_size=1000,
                          cause_size=80, patch_size=16)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
