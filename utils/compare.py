@@ -4,14 +4,14 @@ import torch.nn.functional as F
 
 
 class AE(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, input_size):
         super().__init__()
          
         # Building an linear encoder with Linear
         # layer followed by Relu activation function
         # 784 ==> 9
         self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(28 * 28, 128),
+            torch.nn.Linear(input_size, 128),
             torch.nn.ReLU(),
             torch.nn.Linear(128, 64),
             torch.nn.ReLU(),
@@ -36,7 +36,7 @@ class AE(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(64, 128),
             torch.nn.ReLU(),
-            torch.nn.Linear(128, 28 * 28),
+            torch.nn.Linear(128, input_size),
             torch.nn.Sigmoid()
         )
  
@@ -44,3 +44,40 @@ class AE(torch.nn.Module):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded
+    
+    
+class WTA_RNN_AE(nn.Module):
+    def __init__(self, input_size, k):
+        super(WTA_RNN_AE, self).__init__()
+        self.hidden_size = 64
+        self.k = k
+        
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(input_size, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 64),
+        )
+        
+        self.RNN = nn.RNN(64, 64, num_layers=5, batch_first=True)
+        
+        self.decoder = torch.nn.Sequential(torch.nn.Linear(64, input_size))
+        self.predictor = torch.nn.Sequential(torch.nn.Linear(64, input_size))
+    
+    def WTA(self, code):
+        # keep the top k% of the activations
+        # make it differentiable
+        k = self.k
+        topk, indices = torch.topk(code, k, dim=1)
+        code = torch.zeros_like(code).scatter_(1, indices, topk)
+        
+        return code
+    
+    def forward(self, x, h):
+        code = self.encoder(x)
+        pred, h = self.RNN(code, h)
+        recon = self.decoder(self.WTA(code))
+        pred = self.predictor(self.WTA(pred))
+        
+        return recon, pred, h

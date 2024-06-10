@@ -1,0 +1,13 @@
+# DPCN FISTA hyperparameters for Mario Dataset
+FISTA:
+  n_ch: 3
+  lam: 0.5
+  gamma0: 1.
+  mu: 6.66e-5
+  beta: 0.5
+  X_dim: 300
+  U_dim: 40
+  patch_size: 16 
+  input_size: 40
+  isTopLayer: True
+  n_steps: 50
