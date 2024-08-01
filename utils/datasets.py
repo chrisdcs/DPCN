@@ -71,13 +71,17 @@ class image_loader(Dataset):
     def __len__(self):
         return self.N
     
-def make_patches(img, patch_size):
-    # outupt shape: (batch, n_patches, patch_size^2, 1)
-    try:
-        assert img.shape[2] % patch_size == 0
-        patches = img.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
-        n_ch = patches.shape[1]
-        patches = patches.contiguous().view(patches.size(0), n_ch, -1, patch_size, patch_size).flatten(-2).unsqueeze(-1)
-        return patches
-    except:
-        raise ValueError('Image size must be divisible by patch size')
+class conv_loader(Dataset):
+    def __init__(self, file_path):
+        zca_images = torch.load(file_path).cpu().numpy()
+        self.zca_images = zca_images
+        
+    
+    def __getitem__(self, index):
+        image = self.zca_images[index]
+        # normalize the image
+        #image = (image - image.min()) / (image.max() - image.min())
+        return torch.FloatTensor(image)#.permute(2,0,1)
+    
+    def __len__(self):
+        return self.zca_images.shape[0]

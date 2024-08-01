@@ -12,10 +12,11 @@ import torch.nn.functional as F
 #from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
-from utils.datasets import video_loader, make_patches, mario_loader
+from utils.datasets import video_loader, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
-from utils.model import MM_Layer, Correntropy, FISTA_Layer
+from utils.general import make_patches
+from utils.model import MM_Layer, FISTA_Layer
 
 
 FILE = Path(__file__).resolve()
@@ -30,7 +31,7 @@ if not save_dir.exists():
 
 torch.manual_seed(0)
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     
     
 # video data loader
@@ -38,8 +39,8 @@ loader = DataLoader(mario_loader('data/coil100_video_train_50.npy'), batch_size=
 
 max_epochs = 20
 
-layer1 = FISTA_Layer(n_ch=3, lam=0.5, gamma0=1., mu=0.001, beta=0.2, X_dim=2000, U_dim=128, patch_size=16, 
-                     input_size=40, isTopLayer=True, n_steps=50, multi_dict=True)
+layer1 = FISTA_Layer(n_ch=3, lam=0.5, gamma0=1., mu=0.001, beta=0.2, X_dim=500, U_dim=128, patch_size=16, 
+                     input_size=40, isTopLayer=True, n_steps=20, multi_dict=True)
 layer1 = layer1.to(device)
 #opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_A = torch.optim.Adam([{'params':layer1.A, 'lr':1e-4}])
@@ -67,9 +68,9 @@ for epoch in range(max_epochs):
             opt_C.step()
             
             X_pred_loss = torch.sum(torch.abs(X_hat-X))#10000 * Correntropy(X_hat-X, 0.01)
-            opt_A.zero_grad()
-            X_pred_loss.backward()
-            opt_A.step()
+            #opt_A.zero_grad()
+            #X_pred_loss.backward()
+            #opt_A.step()
             
             #class_loss = 0
             #for i in range(4):
@@ -90,6 +91,6 @@ for epoch in range(max_epochs):
               '\tE2:', '{:.2f}'.format(X_U_loss.item()))
         # print("\tclass_loss: ", class_loss.item())
     print('Epoch Loss: ', np.mean(loss_list))
-    if (epoch+1) % 1 == 0:
-        torch.save(layer1.state_dict(), save_dir / f"layer1_{epoch+1}.pth.tar")
-torch.save(layer1.state_dict(), save_dir / "layer1.pth.tar")
+    #if (epoch+1) % 1 == 0:
+    #    torch.save(layer1.state_dict(), save_dir / f"layer1_{epoch+1}.pth.tar")
+#torch.save(layer1.state_dict(), save_dir / "layer1.pth.tar")

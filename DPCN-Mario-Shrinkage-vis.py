@@ -12,9 +12,10 @@ import torch.nn.functional as F
 #from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
-from utils.datasets import video_loader, make_patches, mario_loader
+from utils.datasets import video_loader, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
+from utils.general import make_patches
 from utils.model import MM_Layer, Shrinkage_Layer_Mario, Shrinkage_Layer_Mario_vis
 
 

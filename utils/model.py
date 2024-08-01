@@ -2,29 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.datasets import make_patches
+import numpy as np
+
+from utils.general import make_patches
+from utils.general import S, patch_to_image, soft_thresholding, toeplitz_mult_ch, conjugate_gradient
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-def S(x):
-    x = torch.where(x > 1, torch.ones_like(x), x)
-    x = torch.where(x < -1, -torch.ones_like(x), x)
-    return x
-
-def soft_thresholding(x, gamma):
-    return torch.sign(x) * torch.max(torch.abs(x) - gamma, torch.zeros_like(x))
-
-def patch_to_image(patches, patch_size):
-    # patches: [batch, n_patches, 16**2, 1]
-    # patch_size: 16
-    batch_size, n_channel, n_patch, patch_dim, _ = patches.shape
-    patch_size = int(patch_dim ** 0.5)
-    grid_size = int(n_patch ** 0.5)
-    image = patches.view(batch_size, n_channel, grid_size, grid_size, patch_size, patch_size)
-    image = image.permute(0, 1, 2, 4, 3, 5).contiguous()
-    image = image.view(batch_size, n_channel, grid_size*patch_size, grid_size*patch_size)
-    return image
 
 class MM_Layer(nn.Module):
     def __init__(self, *args, **kwargs):
@@ -55,10 +39,10 @@ class MM_Layer(nn.Module):
             self.n_dict = 1
 
         
-        C = torch.rand(1, self.n_ch, self.n_dict, 16**2, self.state_size)#.unsqueeze(0).unsqueeze(0)
+        C = torch.rand(1, self.n_ch, self.n_dict, self.patch_size**2, self.state_size)#.unsqueeze(0).unsqueeze(0)
         C = C / C.norm(dim=-2, keepdim=True)
         
-        B = torch.rand(1, self.n_ch, self.n_dict, self.state_size, self.cause_size)#.unsqueeze(0).unsqueeze(0)
+        B = torch.rand(1, self.n_ch, 1, self.state_size, self.cause_size)#.unsqueeze(0).unsqueeze(0)
         B = B / B.norm(dim=-2, keepdim=True)
         
         A = torch.rand(1, self.n_ch, self.n_dict, self.state_size, self.state_size)#.unsqueeze(0).unsqueeze(0)
@@ -75,8 +59,7 @@ class MM_Layer(nn.Module):
         
         self.n_x = kwargs['n_x']
         self.n_u = kwargs['n_u']
-
-        self.multi_dict = kwargs['multi_dict']
+        
         self.use_A = kwargs['use_A']
         
         lam, gamma0, mu, beta =kwargs['lam'], kwargs['gamma0'], kwargs['mu'], kwargs['beta']
@@ -97,9 +80,8 @@ class MM_Layer(nn.Module):
             self.B.data = self.B.data / self.B.data.norm(dim=-2, keepdim=True)
             self.C.data = self.C.data / self.C.data.norm(dim=-2, keepdim=True)
 
-    def inference(self, video):
-        # raise NotImplementedError
-        batch_size, c, h, w, T = video.shape
+    def inference(self, data):
+        batch_size, c, h, w, T = data.shape
         
         X = []
         U = []
@@ -108,8 +90,8 @@ class MM_Layer(nn.Module):
                 if (t+1) % 100 == 0:
                     print('\t', t+1, 'frame')
                     
-                # loop over frames in the video
-                y_t = video[:, :, :, :, t]
+                # loop over frames in the data
+                y_t = data[:, :, :, :, t]
                 
                 # separate patches from an entire image
                 patches_t = make_patches(y_t, self.patch_size)
@@ -134,12 +116,12 @@ class MM_Layer(nn.Module):
         u_t = torch.rand_like(self.B.transpose(-1,-2) @ torch.mean(x_t, dim=2, keepdim=True))
         u_t = u_t / u_t.norm(dim=-2, keepdim=True)
         Cy = self.C.transpose(-1,-2) @ patches
+        beta = self.beta
         
-        
-        for _ in range(1):
+        for _ in range(5):
             # emperically showed that shrinkage algorithm converges/produces good solution in 5 iterations
-            x_t = self.update_state(x_t, x_hat, u_t, Cy)
-            u_t = self.update_cause(x_t, u_t)
+            x_t = self.update_state(x_t.clone(), x_hat.clone(), u_t.clone(), Cy)
+            u_t, beta = self.update_cause(x_t.clone(), u_t.clone(), beta)
             #u_t = self.update_cause(x_t)
             #cause = self.update_cause_FISTA(x_t, cause)
             
@@ -149,31 +131,31 @@ class MM_Layer(nn.Module):
         # x: previous state, shape (batch, n_patches, 300, 1)
         # y: current observation (image patch), shape (batch, n_patches, 16**2, 1)
         # initialize with x_hat
-        
         gamma = torch.tile(torch.div(1 + torch.exp(-self.B @ u), 2), (1, 1, self.n_patch, 1, 1))
         
-        for _ in range(1):
+        for _ in range(self.n_x):
             alpha = (x_k - x_hat) / self.mu
             alpha = S(alpha)
 
             # shrinkage algorithm
             Cyla = Cy - self.lam * alpha
             W_inv = torch.div(torch.abs(x_k), gamma * self.gamma0)
+            D = self.I_x+(self.C * W_inv.transpose(-1,-2)) @ self.C.transpose(-1,-2)
+            v = (self.C * W_inv.transpose(-1,-2)) @ Cyla
             x_k = W_inv * Cyla - (W_inv.transpose(-1,-2) * self.C).transpose(-1,-2) @ \
-                    torch.inverse(self.I_x+(self.C * W_inv.transpose(-1,-2)) @ self.C.transpose(-1,-2)) @ \
-                            ((self.C * W_inv.transpose(-1,-2)) @ Cyla)
+                    torch.inverse(D) @ v#conjugate_gradient(D,v)
         # print(x_k.min(), x_k.max())
         # normalize & shresholding
-        x_index = x_k / torch.norm(x_k)
-        x_index = torch.abs(x_index) < 1e-3
-        x_k[x_index] = 0
+        # x_index = x_k / torch.norm(x_k)
+        #x_index = torch.abs(x_k) < 1e-8
+        #x_k[x_index] = 0
         
         # recon = self.C @ x_k
         # test = recon[0,0,:,:].detach().cpu().squeeze().numpy().reshape(16,16)
         
         return x_k
     
-    def update_cause(self, x_k, u_k):
+    def update_cause(self, x_k, u_k, beta):
         # initialize u_k
         # x = torch.mean(x_k, dim=1, keepdim=True)
         # u_k = torch.randn_like(self.B.transpose(2,3) @ x)
@@ -181,16 +163,18 @@ class MM_Layer(nn.Module):
         
         # abs(x)
         x_abs = torch.sum(torch.abs(x_k), dim=2, keepdim=True)
-        
+        beta = self.beta
+        loss_list = []
         for _ in range(self.n_u):
-            W_inv = torch.div(torch.abs(u_k), self.beta)
+            W_inv = torch.div(torch.abs(u_k), beta)
             u_k = W_inv * self.B.transpose(-1,-2) @ (self.gamma0 * x_abs * torch.exp(-self.B @ u_k))
-                        
-        u_index = u_k / torch.norm(u_k)
-        u_index = torch.abs(u_index) < 1e-3
-        u_k[u_index] = 0
-        
-        return u_k
+            #loss_list.append(((self.gamma0 * (torch.div(1+torch.exp(-self.B @ u_k),2) * x_abs)).sum() + beta * torch.sum(torch.abs(u_k))).item())
+            # beta = max(0.95 * beta, 1e-3)
+        #u_index = u_k / torch.norm(u_k)
+        #u_index = torch.abs(u_index) < 1e-5
+        #u_k[u_index] = 0
+        #print('cause loss:', loss_list)
+        return u_k, beta
     
     def forward(self, X, U, x0):
         # X: [batch, n_patches, dim, 1, T]
@@ -224,9 +208,225 @@ class MM_Layer(nn.Module):
 
 
 class MM_Conv_Layer(nn.Module):
-    def __init__(self):
-        pass
+    def __init__(self, *args, **kwargs):
+        super (MM_Conv_Layer, self).__init__()
+        
+        self.in_ch = kwargs['in_ch']
+        self.x_ch = kwargs['x_ch']
+        self.u_ch = kwargs['u_ch']
+        self.k_size = kwargs['k_size']
+        
+        # assume only stride 1 for now
+        
+        self.i_h = kwargs['i_h']
+        self.i_w = kwargs['i_w']
+        
+        self.n_x = kwargs['n_x']
+        self.n_u = kwargs['n_u']
+        self.n_a = kwargs['n_a']
+        
+        # self.mu = kwargs['mu']
+        self.alpha = kwargs['alpha']
+        self.beta = kwargs['beta']
+        self.gamma0 = kwargs['gamma0']
+        
+        self.device = torch.device("cpu") if device is None else device
+        
+        # input shape is the shape after padding
+        self.inp_shape = (self.in_ch, self.i_h+self.k_size//2*2, self.i_w+self.k_size//2*2)
+        self.state_shape = (self.x_ch, self.i_h//2+self.k_size//2*2, 
+                            self.i_w//2+self.k_size//2*2)
+        # initialize dictionaries
+        k = np.random.rand(self.x_ch * self.in_ch * self.k_size**2) * 0.1
+        k = k.reshape((self.x_ch, self.in_ch, self.k_size, self.k_size))
+        
+        C = toeplitz_mult_ch(k, self.inp_shape)
+        C = torch.FloatTensor(C).unsqueeze(0).transpose(-1,-2)
+        self.C = nn.Parameter(C, requires_grad=False)
+        self.C_conv = nn.Parameter(torch.FloatTensor(k.copy()), requires_grad=True)
+        
+        # initialize cause-state matrix
+        k = np.random.rand(self.u_ch * self.x_ch * self.k_size**2) * 0.1
+        k = k.reshape((self.u_ch, self.x_ch, self.k_size, self.k_size))
 
+        # assuming the kernel size is odd
+        #B = toeplitz_mult_ch(k, self.state_shape)
+        #B = torch.FloatTensor(B).unsqueeze(0).transpose(-1,-2)
+        
+        #self.B = nn.Parameter(B, requires_grad=False)
+        self.B_conv = nn.Parameter(torch.FloatTensor(k.copy()), requires_grad=True)
+        
+        self.normalize_weights()
+        self.update_dict()
+        I = torch.eye(C.shape[-2]).unsqueeze(0)
+        self.I_x = nn.Parameter(I, requires_grad=False)
+        #I = torch.eye(B.shape[-1]).unsqueeze(0)
+        #self.I_u = nn.Parameter(I, requires_grad=False)
+        
+        self.pool = nn.MaxPool2d(2, stride=2, return_indices=True)
+        self.unpool = nn.MaxUnpool2d(2, stride=2)
+        
+        self.reset()
+        
+        
+        
+    
+    def reset(self):
+        self.x, self.u = None, None
+    
+    def normalize_weights(self, skip_state=None, skip_cause=None):
+        with torch.no_grad():
+            if not skip_state:
+                C_data = self.C_conv.data
+                C_data = C_data / (torch.sqrt(torch.sum(C_data**2, dim=(1,2,3), keepdim=True))+1e-12)
+                self.C_conv.data = C_data
+            if not skip_cause:
+                B_data = self.B_conv.data
+                B_data = B_data / (torch.sqrt(torch.sum(B_data**2, dim=(1,2,3), keepdim=True))+1e-12)
+                self.B_conv.data = B_data
+            
+            # self.update_dict()
+    
+    def update_dict(self):
+        with torch.no_grad():
+            k_C = self.C_conv.detach().cpu().numpy()
+            #k_B = self.B_conv.detach().cpu().numpy()
+            
+            C = toeplitz_mult_ch(k_C, self.inp_shape)
+            C = torch.FloatTensor(C).unsqueeze(0).transpose(-1,-2).to(self.device)
+            self.C.data = C
+            
+            #B = toeplitz_mult_ch(k_B, self.state_shape)
+            #B = torch.FloatTensor(B).unsqueeze(0).transpose(-1,-2).to(self.device)
+            #self.B.data = B
+    
+    def inference(self, data, td=None):
+        with torch.no_grad():
+            y = data.clone()
+            x, u = self.AM(y, td)
+        # self.x, self.u = x, u
+        return x, u
+    
+    def AM(self, y, td=None):
+        
+        # alternating minimization
+        # initialize x
+        # Cy = self.C.transpose(-1,-2) @ y
+        Cy = F.conv2d(y, self.C_conv, padding=self.k_size//2).flatten(1).unsqueeze(-1)
+        if self.x is None:
+            x_k = torch.rand_like(Cy.clone())
+        else:
+            x_k = self.x.clone()
+        # x_k = x_k.flatten(1).unsqueeze(-1)
+        # initialize u
+        if self.u is None:
+            u_k = torch.rand(y.shape[0], self.u_ch, self.i_h // 2, self.i_w // 2)
+            u_k = u_k.flatten(1).unsqueeze(-1)
+            u_k = u_k / torch.norm(u_k, dim=1, keepdim=True)
+            u_k = u_k.view(y.shape[0], self.u_ch, self.i_h // 2, self.i_w // 2).to(device)
+            # u_k = u_k / torch.norm(u_k, dim=(1,2,3), keepdim=True)
+            #u_k = torch.rand(y.shape[0], self.B.shape[-1], 1).to(self.device)
+            #u_k = torch.abs(u_k)
+            #u_k = u_k / torch.norm(u_k, dim=1, keepdim=True)
+            
+        else:
+            u_k = self.u.clone()
+        
+        _, self.indices = self.pool(x_k.view(-1, self.x_ch, self.i_h, self.i_w))
+        
+        for _ in range(self.n_a):
+            
+            # update state
+            x_k = self.update_state(x_k, u_k, Cy)
+            
+            # Do max pooling, then padding, then flatten state back to a vector
+            x_inp, self.indices = self.pool(x_k.view(y.shape[0], self.x_ch, self.i_h, self.i_w))
+            #x_inp = F.pad(x_inp, (self.k_size//2, self.k_size//2, self.k_size//2, self.k_size//2))
+            #x_inp = x_inp.flatten(1).unsqueeze(-1)
+            x_inp = torch.abs(x_inp)
+            # u_k = self.B.transpose(-1,-2) @ x_inp
+            # update cause
+            u_k = self.update_cause(x_inp, u_k, td)
+            
+        return x_k, u_k
+    
+    def update_state(self, x_k, u_k, Cy):
+        #gamma = -self.B @ u_k
+        # need to reshape u_k into 2D tensor then unpool
+        #gamma = gamma.view(-1, self.u_ch, self.state_shape[-2], self.state_shape[-1])
+        # we manually pad image, state etc.
+        # remove the padded region
+        #gamma = gamma[:, :, self.k_size//2:-(self.k_size//2), self.k_size//2:-(self.k_size//2)]
+        
+        #gamma = F.conv_transpose2d(u_k, self.B_conv, padding=self.k_size//2)
+        # unpool to work with states
+        #gamma = self.unpool(gamma, self.indices)
+        #gamma = torch.div(1 + torch.exp(gamma), 2)
+        #gamma = gamma.flatten(1).unsqueeze(-1)
+        for _ in range(self.n_x):
+            W_inv = torch.div(torch.abs(x_k), self.alpha)# * gamma)
+            #W_inv = torch.div(torch.abs(x_k), self.gamma0)
+            D = self.I_x + (self.C * W_inv.transpose(-1,-2)) @ self.C.transpose(-1,-2)
+            v = (self.C * W_inv.transpose(-1,-2)) @ Cy
+            x_k = W_inv * Cy - W_inv * F.conv2d(
+                conjugate_gradient(D,v).view(-1, 
+                                             self.in_ch, 
+                                             self.i_h + 2 * (self.k_size//2), 
+                                             self.i_w + 2 * (self.k_size//2)
+                                             ), 
+                                            self.C_conv).flatten(1).unsqueeze(-1)
+            #x_k = W_inv * Cy - (W_inv.transpose(-1,-2) * self.C).transpose(-1,-2) @ \
+            #        conjugate_gradient(D, v)#torch.inverse(D) @ v
+        
+        #x_index = x_k / torch.norm(x_k)
+        #x_index = torch.abs(x_index) < 1e-5
+        #x_k[x_index] = 0
+        
+        return x_k
+    
+    def update_cause(self, x_k, u_k, td):
+        # assume x_k is already padded and taken the absolute value
+        #Cy = self.B.transpose(-1,-2) @ x_k
+        #u_k = Cy.clone()
+        beta = self.beta
+        prev_u = u_k.clone()
+        for _ in range(self.n_u):
+            
+            #D = self.I_u + (self.B * W_inv.transpose(-1,-2)) @ self.B.transpose(-1,-2)
+            #v = (self.B * W_inv.transpose(-1,-2)) @ Cy
+            #u_k = W_inv * Cy - (W_inv.transpose(-1,-2) * self.B).transpose(-1,-2) @ conjugate_gradient(D, v)
+            exp = torch.exp(-F.conv_transpose2d(u_k, self.B_conv, padding=self.k_size//2))
+            exp = self.gamma0 * x_k * exp
+            if td is None:
+                W_inv = torch.div(torch.abs(u_k), beta)
+                u_k = W_inv * F.conv2d(exp, self.B_conv, padding=self.k_size//2)
+                #u_k = W_inv * (self.B.transpose(-1,-2) @ (self.gamma0 * x_k * torch.exp(-self.B @ u_k)))
+            else:
+                W_inv = torch.div(torch.abs(u_k), beta+torch.abs(u_k))
+                u_k = W_inv * (F.conv2d(exp, self.B_conv, padding=self.k_size//2) + 0.01 * td)
+                #u_k = W_inv * (self.B.transpose(-1,-2) @ (self.gamma0 * x_k * torch.exp(-self.B @ u_k))+0.01 * td)
+                
+            u_k = 0.5 * u_k + 0.5 * prev_u
+            prev_u = u_k.clone()
+            beta = max(0.985*beta,1e-3)
+        #u_index = u_k / torch.norm(u_k)
+        #u_index = torch.abs(u_index) < 1e-5
+        #u_k[u_index] = 0
+        
+        return u_k
+    
+    def forward(self, x_k, u_k):
+        #recon = self.C @ x_k
+        recon = F.conv_transpose2d(x_k, self.C_conv, padding=self.k_size//2)
+        #recon_x = self.B @ u_k
+        gamma = torch.exp(-F.conv_transpose2d(u_k, self.B_conv, padding=self.k_size//2))
+        # gamma = torch.exp(-self.B @ u_k).view(-1, self.u_ch, self.state_shape[-2], self.state_shape[-1])
+        # gamma = gamma[:, :, self.k_size//2:-(self.k_size//2), self.k_size//2:-(self.k_size//2)]
+        #gamma = self.unpool(gamma, self.indices)
+        # gamma = gamma.flatten(1).unsqueeze(-1)
+        cause_state = gamma * torch.abs(self.pool(x_k)[0])
+        return recon, cause_state#recon_x
+        
 class FISTA_Layer(nn.Module):
     def __init__(self, *args, **kwargs) -> None:
         super(FISTA_Layer, self).__init__()
@@ -251,15 +451,25 @@ class FISTA_Layer(nn.Module):
         self.input_size = kwargs['input_size']
         self.isTopLayer = kwargs['isTopLayer']
         
+        if "n_dict" in kwargs:
+            self.n_dict = kwargs['n_dict']
+        else:
+            self.n_dict = 1
+        
+        if "use_A" in kwargs:
+            self.use_A = kwargs['use_A']
+        else:
+            self.use_A = True
+        
         input_size = self.patch_size ** 2 if self.isTopLayer else kwargs['input_size']
         
-        C = torch.rand(1, self.n_ch, 1, input_size, self.X_dim)
+        C = torch.rand(1, self.n_ch, self.n_dict, input_size, self.X_dim)
         C = C / C.norm(dim=-2, keepdim=True)
         
-        B = torch.rand(1, self.n_ch, 1, self.X_dim, self.U_dim)
+        B = torch.rand(1, self.n_ch, self.n_dict, self.X_dim, self.U_dim)
         B = B / B.norm(dim=-2, keepdim=True)
         
-        A = torch.rand(1, self.n_ch, 1, self.X_dim, self.X_dim)
+        A = torch.rand(1, self.n_ch, self.n_dict, self.X_dim, self.X_dim)
         A = A / A.norm(dim=-2, keepdim=True)
         
         self.A = nn.Parameter(A)
@@ -271,27 +481,28 @@ class FISTA_Layer(nn.Module):
         self.device = torch.device("cpu") if device is None else device
         
         
-    def inference(self, video):
+    def inference(self, data):
         X = []
         U = []
         
         with torch.no_grad():
-            for t in range(video.shape[-1]):
+            for t in range(data.shape[-1]):
                 if (t+1) % 100 == 0:
                     print('\t', t+1, 'frame')
                     
-                # loop over frames in the video
-                y_t = video[:, :, :, :, t]
+                # loop over frames in the data
+                y_t = data[:, :, :, :, t]
                 
                 # separate patches from an entire image
                 if self.isTopLayer:
                     patches_t = make_patches(y_t, self.patch_size)
-                if t == 0:
+                if t == 0 or not self.use_A:
                     x_prev = torch.zeros_like(self.C.transpose(-1,-2) @ patches_t)
                 x_t, u_t = self.AM_FISTA(patches_t, x_prev)
                 X.append(x_t)
                 U.append(u_t)
-                x_prev = x_t.clone()
+                if self.use_A:
+                    x_prev = x_t.clone()
                 
         X = torch.stack(X, dim=-1)
         U = torch.stack(U, dim=-1)
@@ -439,7 +650,7 @@ class FISTA_Layer(nn.Module):
         batch_size = z_k.shape[0]
         
         # gradient of 1/2 * ||y_t - C x_t||_2^2 + lambda * ||x_t - Ax_t_1||_1 w.r.t. u_t
-        exp_func = torch.exp(-self.B @ z_k) / 2
+        exp_func = self.gamma0 * torch.exp(-self.B @ z_k) / 2
         gradient_zk = -self.B.transpose(-1,-2) @ (exp_func * x)
         # print("shape of gradient: ", gradient_xk.shape)
         

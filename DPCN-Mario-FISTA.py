@@ -12,9 +12,10 @@ import torch.nn.functional as F
 #from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
-from utils.datasets import video_loader, make_patches, mario_loader
+from utils.datasets import video_loader, mario_loader
 import matplotlib.pyplot as plt
 import numpy as np
+from utils.general import make_patches
 from utils.model import FISTA_Layer
 
 
@@ -30,7 +31,7 @@ if not save_dir.exists():
 
 torch.manual_seed(0)
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     
     
 # video data loader
@@ -38,8 +39,8 @@ loader = DataLoader(mario_loader('data/mario_video_train.npy'), batch_size=2, sh
 
 max_epochs = 5
 
-layer1 = FISTA_Layer(n_ch=3, lam=0.5, gamma0=1., mu=0.01/150, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
-                     input_size=40, isTopLayer=True, n_steps=50)
+layer1 = FISTA_Layer(n_ch=3, lam=0., gamma0=1., mu=0.01/150, beta=0.5, X_dim=300, U_dim=40, patch_size=16, 
+                     input_size=40, isTopLayer=True, n_steps=20, use_A=False)
 layer1 = layer1.to(device)
 opt_A = torch.optim.SGD([{'params':layer1.A, 'lr':1e-4}])
 opt_B = torch.optim.SGD([{'params':layer1.B, 'lr':1e-4}])
@@ -84,4 +85,4 @@ for epoch in range(max_epochs):
               '\tstate_pred_loss:', '{:.2f}'.format(X_pred_loss.item()), 
               '\tE2:', '{:.2f}'.format(X_U_loss.item()))
     print('Epoch Loss: ', np.mean(loss_list))
-torch.save(layer1.state_dict(), save_dir / "layer1.pth.tar")
+# torch.save(layer1.state_dict(), save_dir / "layer1.pth.tar")
